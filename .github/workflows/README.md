@@ -45,7 +45,17 @@ To exclude certain URLs from checking, add patterns to `.lycheeignore`:
 
 ### 2. Model Analysis (`model-analysis.yml`)
 
-Validates model specifications in workflow templates.
+Validates model specifications in workflow templates. Pull request source runs only
+on `pull_request` with a read-only token and no persisted checkout credentials.
+The complete report appears in the job log, with a bounded, escaped copy in the
+job summary. The workflow does not post PR comments. Analyzer validation failures
+and crashes both fail the check.
+
+Local check:
+```bash
+python3 -m unittest discover -s tests -p test_model_analysis_ci.py -v
+bash scripts/run_model_analysis_ci.sh
+```
 
 ### 3. Validate Templates (`validate-templates.yml`)
 

@@ -4,128 +4,33 @@ on:
   push:
     paths:
       - 'templates/**.json'
-  pull_request_target:
+      - 'scripts/analyze_models.py'
+      - 'scripts/run_model_analysis_ci.sh'
+      - 'tests/test_model_analysis_ci.py'
+      - '.github/workflows/model-analysis.yml'
+  pull_request:
     paths:
       - 'templates/**.json'
+      - 'scripts/analyze_models.py'
+      - 'scripts/run_model_analysis_ci.sh'
+      - 'tests/test_model_analysis_ci.py'
+      - '.github/workflows/model-analysis.yml'
 
 permissions:
   contents: read
-  pull-requests: write  # Allow commenting on PRs
 
 jobs:
   model-analysis:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout unprivileged pull request source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Test CI failure handling
+        run: python3 -m unittest discover -s tests -p test_model_analysis_ci.py -v
 
-      - name: Run model analysis script
-        id: model_analysis
-        run: |
-          echo "Running model analysis..."
-          python scripts/analyze_models.py > model_analysis_report.txt 2>&1 || echo "model_analysis_failed=true" >> $GITHUB_OUTPUT
-          cat model_analysis_report.txt
-          
-          # Check if analysis failed
-          if grep -q "\[FAIL\]" model_analysis_report.txt; then
-            echo "model_analysis_failed=true" >> $GITHUB_OUTPUT
-            echo "::error::Model analysis found issues. See report above."
-          else
-            echo "model_analysis_failed=false" >> $GITHUB_OUTPUT
-          fi
-        continue-on-error: true
-    
-      - name: Comment on PR about model analysis results (failures only)
-        if: github.event_name == 'pull_request_target' && steps.model_analysis.outputs.model_analysis_failed == 'true'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            
-            // Read model analysis report
-            let report = '';
-            try {
-              report = fs.readFileSync('model_analysis_report.txt', 'utf8');
-            } catch (error) {
-              report = 'Unable to read model analysis report';
-            }
-            
-            const commentBody = `## ❌ Model Analysis Check Failed
-            
-            Model configuration issues were found in your template files that need to be fixed.
-            
-            **Why this matters:** Model configurations in templates must be correct to ensure users can download and use the right model files. Incorrect configurations will cause templates to fail.
-            
-            ### Analysis Report:
-            \`\`\`
-            ${report}
-            \`\`\`
-            
-            ### Common Issues and How to Fix:
-            
-            1. **Missing properties.models configuration**:
-               - Add \`properties.models\` array to nodes that use .safetensors files
-               - Ensure the array contains model name, download URL, and directory information
-            
-            2. **widgets_values and properties.models mismatch**:
-               - Ensure model filenames in \`widgets_values\` match the \`name\` field in \`properties.models\`
-               - Check for exact spelling and case sensitivity
-            
-            3. **Markdown link errors**:
-               - Ensure \`[filename.safetensors](url)\` links have consistent filenames between text and URL
-               - Note: Civitai links are automatically whitelisted as they use model IDs instead of filenames
-            
-            4. **Subgraph nodes**:
-               - Note: Subgraph nodes (UUID-type) are automatically skipped from model validation
-               - Their model configurations are handled within the subgraph definition
-            
-            Please fix these issues and resubmit.
-            
-            ---
-            *This comment is automatically updated by the Model Analysis workflow.*`;
-            
-            // Find existing comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            
-            const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && 
-              comment.body.includes('Model Analysis Check')
-            );
-            
-            if (botComment) {
-              // Update existing comment
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: commentBody
-              });
-              console.log('Updated existing comment');
-            } else {
-              // Create new comment
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: commentBody
-              });
-              console.log('Created new comment');
-            }
-    
-      - name: Fail job if model analysis issues found
-        if: steps.model_analysis.outputs.model_analysis_failed == 'true'
-        run: |
-          echo "❌ Model analysis failed with issues"
-          exit 1
+      - name: Analyze model specifications
+        run: bash scripts/run_model_analysis_ci.sh
